@@ -1,20 +1,72 @@
+#!/bin/bash
+config_file="$HOME/.nhow.env"
+jwt_file="$HOME/.nhow.jwt"
+declare -a config_vars=("identity" "codigo_empresa" "numero_matricula" "senha" "longitude" "latitude")
 
 # reads values from config file
 # $1 is variable name in .env
 read_var_config()
 {
-    config_file=.env
-    sed -nr 's/^'$1'=(.*)$/\1/p' $config_file
+    sed -nr "s/^$1=(.*)$/\1/p" "$config_file"
 }
+
+urlencode() {
+  local LC_ALL=C
+  local string="$*"
+  local length="${#string}"
+  local char
+
+  for (( i = 0; i < length; i++ )); do
+    char="${string:i:1}"
+    if [[ "$char" == [a-zA-Z0-9.~_-] ]]; then
+      printf "$char"
+    else
+      printf '%%%02X' "'$char"
+    fi
+  done
+}
+
+
+write_var_config() {
+    echo -e "\033[1m$1\033[0m: "
+    read -r received_var
+    if [ -z "$received_var" ]; then
+        echo -e "Por favor, forneça o valor de \033[1m$1\033[0m."
+        write_var_config "$1"
+    fi
+    echo "$1=$received_var" >> "$config_file"
+}
+
+
+check_env_vars() {
+    if [ ! -f "$config_file" ]; then
+        if ! touch "$config_file"; then
+            echo "Não foi possível criar o arquivo de configurações em config_file: $config_file ."
+            echo "Verifique que você possui permissão de escrita no caminho acima e tente novamente."
+            exit 1
+        fi
+    fi
+    for i in "${config_vars[@]}"; do
+        var=$(read_var_config "$i")
+        if [ -z "$var" ]; then
+            echo -e "Forneça o valor de \033[1m* $i *\033[0m utilizado nas requisições do portal."
+            write_var_config "$i"
+        fi
+    done
+}
+
+
+check_env_vars
 
 # set global configuration variables
 identity=$(read_var_config identity)
 codigo_empresa=$(read_var_config codigo_empresa)
 numero_matricula=$(read_var_config numero_matricula)
 senha=$(read_var_config senha)
-urlencoded_senha=$(bash urlencode.sh "$senha")
+urlencoded_senha=$(urlencode "$senha")
 long=$(read_var_config longitude)
 lat=$(read_var_config latitude)
+
 
 Help() {
    # Display Help
@@ -47,12 +99,12 @@ get_jwt() {
         -H 'sec-fetch-site: same-origin' \
         --data-raw "empresa=$codigo_empresa&origin=portal&matricula=$numero_matricula&senha=$urlencoded_senha" \
         --compressed)
-    my_jwt=$(echo $login_response | jq .jwt | sed 's/"//g')
-    echo $my_jwt > .nhow.jwt
+    my_jwt=$(echo "$login_response" | jq .jwt | sed 's/"//g')
+    echo "$my_jwt" > "$jwt_file"
 }
 
 get_todays_ponto() {
-    my_jwt=$(cat .nhow.jwt 2>/dev/null)
+    my_jwt=$(cat "$jwt_file" 2>/dev/null)
     [ $? == 1 ] && echo "You need to generate a new jwt. Run <./nhow.sh -j>" && exit 1
     today=$(date -I)
     curl https://www.nhow.com.br/api-espelho/apuracao/ -H "Authorization: Bearer $my_jwt" | jq ".dias[] | select(.referencia==\"$today\")".batidas
