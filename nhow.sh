@@ -75,11 +75,13 @@ Help() {
    echo "sintaxe: nhow.sh [-j|e|p|h]"
    echo "opções:"
    echo "j     (jwt) Gera um novo jwt para autenticação no sistema."
-   echo "e     (espelho) Imprime os horários nos quais você bateu o ponto hoje."
+   echo "e     (espelho) Imprime os horários nos quais você bateu o ponto no dia atual."
+   echo "                Aceita um parâmetro adicional definindo o dia do espelho, no formato do comando \"date --date\" (ex. yesterday, last week, 2 days ago)."
    echo "p     (ponto) Bate o ponto no horário atual."
    echo "h     (help) Imprime este diálogo de ajuda."
    echo
 }
+
 
 get_jwt() {
     login_response=$(curl 'https://www.nhow.com.br/externo/login'  \
@@ -103,17 +105,42 @@ get_jwt() {
     echo "$my_jwt" > "$jwt_file"
 }
 
-get_todays_ponto() {
+
+get_ponto_of_given_day() {
+    # $@ handles arguments as array, $* concatenates all arguments as string
+    target_day=$([ "$*" == "" ] && echo "today" || echo "$@")
+    date_of_pontos=$(date -I --date="$target_day")
+    if [ ! "$date_of_pontos" ]; then
+        echo "Invalid date argument."
+        echo "Please check https://www.gnu.org/software/tar/manual/html_chapter/Date-input-formats.html#Relative-items-in-date-strings";
+        exit 1
+    fi
     my_jwt=$(cat "$jwt_file" 2>/dev/null)
     [ $? == 1 ] && echo "You need to generate a new jwt. Run <./nhow.sh -j>" && exit 1
-    today=$(date -I)
-    curl https://www.nhow.com.br/api-espelho/apuracao/ -H "Authorization: Bearer $my_jwt" | jq ".dias[] | select(.referencia==\"$today\")".batidas
+    res="$(curl https://www.nhow.com.br/api-espelho/apuracao/ -H "Authorization: Bearer ${my_jwt}")"
+    if [ "$res" == "" ]; then
+        echo "Could not connect to the API. Please run this additional request for debugging purposes:"
+        echo "curl -I https://www.nhow.com.br/api-espelho/apuracao/ -H \"Authorization: Bearer ${my_jwt}\""
+        echo "or try generating a new JWT via <./nhow.sh -j>"
+        exit 1
+    fi
+    has_error=$(echo "$res" | jq 'has("error")')
+    if [ "$has_error" == "true" ]; then
+        http_status=$(echo "$res" | jq .code)
+        details=$(echo "$res" | jq .message)
+        echo "Error while requesting to the API. HTTP Status $http_status"
+        echo "Details: $details"
+        echo "Try generating a new JWT via <./nhow.sh -j>"
+        exit 1
+    fi
+    echo "$res" | jq ".dias[] | select(.referencia==\"$date_of_pontos\")".batidas
 }
+
 
 hit_ponto() {
     timestamp=$(date +%s%N | cut -b1-13)
     echo "Bater ponto? [s|N]"
-    read should_proceed
+    read -r should_proceed
     [[ $should_proceed != 's' ]] && echo "Finalizando programa sem bater o ponto..." && exit 0
 
     curl 'https://www.nhow.com.br/batidaonline/verifyIdentification' \
@@ -125,6 +152,7 @@ hit_ponto() {
       --compressed
 }
 
+
 # handle script options
 while getopts ":jeph" option; do
     case $option in
@@ -132,7 +160,7 @@ while getopts ":jeph" option; do
             get_jwt
             exit;;
         e) # print daily pontos
-            get_todays_ponto
+            get_ponto_of_given_day "${@:2}"
             exit;;
         p) # hits ponto with current timestamp
             hit_ponto
@@ -149,7 +177,7 @@ done
 
 
 # shows help when script is called without params
-if [ -z $1 ]; then
+if [ -z "$1" ]; then
     Help
     exit
 fi
