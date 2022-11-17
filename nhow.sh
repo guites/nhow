@@ -133,7 +133,13 @@ get_ponto_of_given_day() {
         echo "Try generating a new JWT via <./nhow.sh -j>"
         exit 1
     fi
-    echo "$res" | jq ".dias[] | select(.referencia==\"$date_of_pontos\")".batidas
+    echo "$res" | jq "
+        .dias[] |
+        select(.referencia==\"$date_of_pontos\") |
+        {
+            batidas: .batidas,
+            totais: [(.totais[] | select(.grupo==\"Outros\"))]
+        }"
 }
 
 
